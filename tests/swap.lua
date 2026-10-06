@@ -164,7 +164,7 @@ end
 
 normal_setup('javascript', '[\n  { a: 1,\n    b: 2 },\n  "last"\n]', '1')
 press(']a')
-assert(content() == '[\n  { a: 1,\n    b: 2 },\n  "last"\n]')
+assert(content() == '[\n  { b: 2,\n    a: 1 },\n  "last"\n]', 'Value cursor did not infer the whole entry')
 
 normal_setup('python', '["世界", "last"]', '"世界"', 1)
 press(']a')
@@ -190,6 +190,41 @@ press(']a')
 assert(content() == 'printf second first', 'Climbed out at argument boundary')
 press('[a')
 assert(content() == 'printf first second')
+
+-- Infer an entire keyed entry from its key or value, not the roles inside it.
+local options_line = [[vim.keymap.set({ 'n', 'v' }, 'j', "v:count == 0 ? 'gj' : 'j'", { expr = true, silent = true })]]
+local swapped_options_line = [[vim.keymap.set({ 'n', 'v' }, 'j', "v:count == 0 ? 'gj' : 'j'", { silent = true, expr = true })]]
+for _, target in ipairs({ 'expr', 'true' }) do
+  normal_setup('lua', options_line, target)
+  local original_cursor = vim.api.nvim_win_get_cursor(0)
+  press(']a')
+  assert(content() == swapped_options_line, 'Failed to infer Lua table entry from ' .. target)
+  assert(vim.fn.mode() == 'n')
+  assert(vim.api.nvim_win_get_cursor(0)[2] == original_cursor[2] + 15)
+  press(']a')
+  assert(content() == swapped_options_line, 'Climbed out at the last table entry')
+  press('[a')
+  assert(content() == options_line)
+  assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), original_cursor))
+end
+for _, case in ipairs({
+  { 'javascript', 'const xs = { first: 1, second: 2 };', 'first',
+    'const xs = { second: 2, first: 1 };' },
+  { 'json', '{"first": 1, "second": 2}', 'first', '{"second": 2, "first": 1}' },
+  { 'python', '{"first": 1, "second": 2}', 'first', '{"second": 2, "first": 1}' },
+}) do
+  normal_setup(case[1], case[2], case[3])
+  press(']a')
+  assert(content() == case[4], 'Failed to infer keyed entry in ' .. case[1])
+  press('[a')
+  assert(content() == case[2])
+end
+setup('lua', options_line, 'expr')
+press(']a')
+assert(content() == options_line, 'Visual selection was rounded to a larger entry')
+normal_setup('lua', 'call({ expr = true }, other)', 'expr')
+press(']a')
+assert(content() == 'call({ expr = true }, other)', 'Climbed out of a singleton keyed entry')
 
 -- Opening/closing string delimiters must infer the same item as its content.
 local keymap_line = "  vim.keymap.set({ 'n', 'x' }, ']a', require('tree_swap').swap_next)"

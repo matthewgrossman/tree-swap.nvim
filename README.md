@@ -81,6 +81,19 @@ The cursor stays at the same position within the moved text, without entering
 Visual mode. Whitespace/punctuation between named children is a no-op. Different
 field roles, such as a call's function and arguments, are not swapped.
 
+Inside a keyed entry, the key and value have different field roles, but the whole
+entry can itself have matching peers. In that case inference lifts to the entry
+when its tree includes unnamed syntax tokens, without checking their text:
+
+```lua
+{ expr = true, silent = true }
+-- Cursor on expr (or its value), ]a → { silent = true, expr = true }
+```
+
+The lift requires an adjacent entry with the same node type and field role.
+Singleton entries and boundaries do not fall back to moving an enclosing list.
+Visual mode never performs this lift; its selection must match the whole entry.
+
 This is a structural heuristic, not a universal definition of a list. Grammars
 can represent string fragments or other constructs as sibling groups, and
 single-child containers can be indistinguishable from wrappers. Use Visual

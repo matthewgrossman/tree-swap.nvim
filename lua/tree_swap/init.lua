@@ -53,6 +53,16 @@ local function visual_range()
     finish[3] - 1 + #selected[#selected] }
 end
 
+local function has_peer(node)
+  local role = field(node)
+  for _, sibling in pairs({ node:prev_named_sibling(), node:next_named_sibling() }) do
+    if not unsafe(sibling) and sibling:type() == node:type() and field(sibling) == role then
+      return true
+    end
+  end
+  return false
+end
+
 local function cursor_node(node)
   -- A non-leaf under the cursor means whitespace between tokens, not an item.
   if node:child_count() > 0 or unsafe(node) then return nil end
@@ -80,12 +90,23 @@ local function cursor_node(node)
           has_fields = has_fields or name ~= nil
         end
       end
-      if repeated or has_fields or parent:child_count() > parent:named_child_count() then
+      local has_tokens = parent:child_count() > parent:named_child_count()
+      -- Fixed-role children can form one repeated item (e.g. a key/value
+      -- entry). Lift the complete item, never exchange its internal roles.
+      -- Require syntax tokens and matching peer entries to avoid treating a
+      -- call's function/arguments as interchangeable children or climbing out
+      -- of a singleton argument list.
+      if has_fields and has_tokens and not has_peer(node) and has_peer(parent) then
+        node = parent
+      elseif repeated or has_fields or has_tokens then
         -- Stop regardless of direction: a failed swap must not climb outward.
         return node
+      else
+        node = parent
       end
+    else
+      node = parent
     end
-    node = parent
   end
 end
 
