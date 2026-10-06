@@ -52,7 +52,7 @@ vim.keymap.set('x', '[a', swap.swap_previous)
 
 ## Selecting and swapping
 
-The plugin creates **no mappings by default**, and `setup()` is not required.
+The plugin creates **no mappings** and has no `setup()` or configuration options.
 The examples above explicitly bind two functions in **Visual mode**:
 
 | Key | Action |
@@ -79,18 +79,9 @@ Manual characterwise selection also works when it exactly matches a named node.
 ### Custom mappings
 
 ```lua
-require('tree_swap').setup({
-  keymaps = { next = '<leader>l', previous = '<leader>h' },
-})
-```
-
-Only keys you explicitly supply are mapped; omitted keys (or `false`) are left
-untouched. Alternatively, bind the functions directly without calling `setup()`:
-
-```lua
 local swap = require('tree_swap')
-vim.keymap.set('x', ']a', swap.swap_next)
-vim.keymap.set('x', '[a', swap.swap_previous)
+vim.keymap.set('x', '<leader>l', swap.swap_next, { desc = 'Swap node forward' })
+vim.keymap.set('x', '<leader>h', swap.swap_previous, { desc = 'Swap node backward' })
 ```
 
 ## Behavior and limits
