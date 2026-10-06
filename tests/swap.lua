@@ -1,11 +1,15 @@
 -- Run from the repository root: nvim --headless -u NONE -l tests/swap.lua
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
+local normal_next = vim.fn.maparg(']a', 'n', false, true)
+local normal_previous = vim.fn.maparg('[a', 'n', false, true)
 local swap = require('tree_swap')
 assert(vim.fn.maparg(']a', 'x') == '')
 assert(vim.fn.maparg('[a', 'x') == '')
+assert(vim.deep_equal(vim.fn.maparg(']a', 'n', false, true), normal_next))
+assert(vim.deep_equal(vim.fn.maparg('[a', 'n', false, true), normal_previous))
 assert(swap.setup == nil, 'Plugin should not expose unused setup configuration')
-vim.keymap.set('x', ']a', swap.swap_next)
-vim.keymap.set('x', '[a', swap.swap_previous)
+vim.keymap.set({ 'n', 'x' }, ']a', swap.swap_next)
+vim.keymap.set({ 'n', 'x' }, '[a', swap.swap_previous)
 vim.keymap.set({ 'n', 'x' }, '<CR>', function()
   vim.treesitter.select('parent', vim.v.count1)
 end)
@@ -56,6 +60,9 @@ local cases = {
   { 'javascript', 'const xs = [\n  { a: 1,\n    b: 2 },\n  "last",\n];',
     '{ a: 1,\n    b: 2 }', 'const xs = [\n  "last",\n  { a: 1,\n    b: 2 },\n];' },
   { 'json', '{"one": 1, "two": 2}', '"one": 1', '{"two": 2, "one": 1}' },
+  { 'python', 'first()\nsecond()', 'first()', 'second()\nfirst()' },
+  { 'bash', 'printf first second', 'first', 'printf second first' },
+  { 'bash', 'first | second', 'first', 'second | first' },
 }
 
 for _, exclusive in ipairs({ false, true }) do
@@ -113,8 +120,76 @@ press(']a')
 assert(content() == '["first", "last"]')
 vim.bo.modifiable = true
 press('<Esc>')
+press('V')
 swap.swap_next()
-assert(content() == '["first", "last"]', 'Swapped outside Visual mode')
+assert(content() == '["first", "last"]', 'Swapped a linewise selection')
+press('<Esc>')
+
+local function normal_setup(lang, code, target, offset)
+  setup(lang, code, target)
+  press('<Esc>')
+  local prefix = code:sub(1, assert(code:find(target, 1, true)) - 1 + (offset or 0))
+  local lines = vim.split(prefix, '\n', { plain = true })
+  vim.api.nvim_win_set_cursor(0, { #lines, #lines[#lines] })
+end
+
+normal_setup('json', '["first", "middle", "last"]', '"middle"', 3)
+press(']a')
+assert(content() == '["first", "last", "middle"]')
+assert(vim.fn.mode() == 'n', 'Normal swap entered Visual mode')
+assert(vim.api.nvim_win_get_cursor(0)[2] == 21, 'Cursor did not follow the string')
+press('[a')
+assert(content() == '["first", "middle", "last"]')
+assert(vim.api.nvim_win_get_cursor(0)[2] == 13)
+press('[a')
+assert(content() == '["middle", "first", "last"]')
+
+normal_setup('javascript', '[foo(a, b), bar()]', 'a')
+press(']a')
+assert(content() == '[foo(b, a), bar()]')
+press(']a')
+assert(content() == '[foo(b, a), bar()]', 'Climbed out of an inner sibling group')
+
+for _, case in ipairs({
+  { 'javascript', '[foo(a, b), bar()]', 'b', 0 },
+  { 'javascript', '[foo(a), bar()]', 'a', 0 },
+  { 'javascript', '[foo(a, b), bar()]', 'foo', 0 },
+  { 'json', '["first", "last"]', ', ', 1 },
+  { 'javascript', '["first", /* comment */ "last"]', '"first"', 2 },
+}) do
+  normal_setup(case[1], case[2], case[3], case[4])
+  press(']a')
+  assert(content() == case[2], 'Ambiguous normal-mode swap: ' .. content())
+end
+
+normal_setup('javascript', '[\n  { a: 1,\n    b: 2 },\n  "last"\n]', '1')
+press(']a')
+assert(content() == '[\n  { a: 1,\n    b: 2 },\n  "last"\n]')
+
+normal_setup('python', '["世界", "last"]', '"世界"', 1)
+press(']a')
+assert(content() == '["last", "世界"]')
+assert(vim.api.nvim_win_get_cursor(0)[2] == 10, 'UTF-8 cursor offset was lost')
+press('[a')
+assert(content() == '["世界", "last"]')
+assert(vim.api.nvim_win_get_cursor(0)[2] == 2)
+press('u')
+assert(content() == '["last", "世界"]', 'Normal swap was not one undo step')
+
+normal_setup('python', 'call("""first\nsecond""", "last")', 'second', 3)
+press(']a')
+assert(content() == 'call("last", """first\nsecond""")')
+assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 2, 3 }), 'Multiline cursor offset was lost')
+press('[a')
+assert(content() == 'call("""first\nsecond""", "last")')
+
+normal_setup('bash', 'printf first second', 'first', 2)
+press(']a')
+assert(content() == 'printf second first', 'Whitespace-separated arguments did not swap')
+press(']a')
+assert(content() == 'printf second first', 'Climbed out at argument boundary')
+press('[a')
+assert(content() == 'printf first second')
 
 -- Missing parsers are a no-op, not an error.
 vim.cmd.enew({ bang = true })
@@ -125,6 +200,9 @@ press(']a')
 assert(content() == 'one, two')
 assert(notifications[#notifications] == 'No Tree-sitter parser for this buffer.')
 press('<Esc>')
+press(']a')
+assert(content() == 'one, two')
+assert(notifications[#notifications] == 'No Tree-sitter parser for this buffer.')
 
 vim.keymap.del('x', ']a')
 vim.keymap.del('x', '[a')
@@ -136,4 +214,4 @@ press('<leader>l')
 assert(content() == '["last", "first"]', 'Custom direct binding failed')
 assert(selection() == '"first"')
 
-print('PASS: swaps, nested/multiline/UTF-8 nodes, selection tracking, safety checks, undo, incremental selection, custom mappings')
+print('PASS: Visual/Normal swaps, punctuation-independent siblings, cursor/selection tracking, safety checks, undo, incremental selection, custom mappings')

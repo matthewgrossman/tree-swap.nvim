@@ -1,9 +1,8 @@
 # tree-swap.nvim
 
-Swap **the syntax node you selected**, not whatever happens to be under the
-cursor. Expand a selection to an argument, string, or nested array item, then
-move it forward or backward among its siblings. The moved item stays selected
-so you can keep reordering it.
+Swap Tree-sitter siblings from either a **Visual selection** or the **Normal-mode
+cursor**. Select exactly what should move, or let the syntax tree infer a nearby
+item. The selection or cursor follows the moved text so you can keep reordering it.
 
 ```javascript
 ["first", "middle", "last"]
@@ -26,8 +25,8 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 {
   'matthewgrossman/tree-swap.nvim',
   keys = {
-    { ']a', function() require('tree_swap').swap_next() end, mode = 'x', desc = 'Swap node forward' },
-    { '[a', function() require('tree_swap').swap_previous() end, mode = 'x', desc = 'Swap node backward' },
+    { ']a', function() require('tree_swap').swap_next() end, mode = { 'n', 'x' }, desc = 'Swap node forward' },
+    { '[a', function() require('tree_swap').swap_previous() end, mode = { 'n', 'x' }, desc = 'Swap node backward' },
   },
 }
 ```
@@ -37,8 +36,8 @@ With Neovim's built-in `vim.pack`:
 ```lua
 vim.pack.add({ 'https://github.com/matthewgrossman/tree-swap.nvim' })
 local swap = require('tree_swap')
-vim.keymap.set('x', ']a', swap.swap_next, { desc = 'Swap node forward' })
-vim.keymap.set('x', '[a', swap.swap_previous, { desc = 'Swap node backward' })
+vim.keymap.set({ 'n', 'x' }, ']a', swap.swap_next, { desc = 'Swap node forward' })
+vim.keymap.set({ 'n', 'x' }, '[a', swap.swap_previous, { desc = 'Swap node backward' })
 ```
 
 For local development, add the checkout to your runtimepath instead:
@@ -46,19 +45,46 @@ For local development, add the checkout to your runtimepath instead:
 ```lua
 vim.opt.runtimepath:prepend(vim.fn.expand('~/dev/tree-swap.nvim'))
 local swap = require('tree_swap')
-vim.keymap.set('x', ']a', swap.swap_next)
-vim.keymap.set('x', '[a', swap.swap_previous)
+vim.keymap.set({ 'n', 'x' }, ']a', swap.swap_next)
+vim.keymap.set({ 'n', 'x' }, '[a', swap.swap_previous)
 ```
 
 ## Selecting and swapping
 
 The plugin creates **no mappings** and has no `setup()` or configuration options.
-The examples above explicitly bind two functions in **Visual mode**:
+The examples above explicitly bind two functions in **Normal and Visual modes**:
 
 | Key | Action |
 | --- | --- |
-| `]a` | Swap selected node with the next sibling |
-| `[a` | Swap selected node with the previous sibling |
+| `]a` | Swap selected/inferred node with the next sibling |
+| `[a` | Swap selected/inferred node with the previous sibling |
+
+### Normal mode
+
+Place the cursor inside an item and use `]a` or `[a`. The plugin starts at the
+smallest named node and climbs through wrappers. It stops at a branching parent
+with repeated child types, named fields, or unnamed children, independently of
+swap direction. Fully named, unfielded wrappers with distinct child types are
+skipped (some grammars model literal start/content/end this way). It swaps only
+an adjacent sibling with the same Tree-sitter field, including two unfielded
+siblings. No punctuation values or language-specific node names are checked.
+
+```javascript
+[foo(a, b), bar()]
+// Cursor on a, ]a → [foo(b, a), bar()]
+// Cursor on b in the original, ]a → no change; never jumps to swapping foo(...).
+```
+
+The cursor stays at the same position within the moved text, without entering
+Visual mode. Whitespace/punctuation between named children is a no-op. Different
+field roles, such as a call's function and arguments, are not swapped.
+
+This is a structural heuristic, not a universal definition of a list. Grammars
+can represent string fragments or other constructs as sibling groups, and
+single-child containers can be indistinguishable from wrappers. Use Visual
+selection when you need to control the exact scope.
+
+### Visual mode
 
 Use Neovim's built-in incremental selection to choose the node. For example:
 
@@ -80,27 +106,29 @@ Manual characterwise selection also works when it exactly matches a named node.
 
 ```lua
 local swap = require('tree_swap')
-vim.keymap.set('x', '<leader>l', swap.swap_next, { desc = 'Swap node forward' })
-vim.keymap.set('x', '<leader>h', swap.swap_previous, { desc = 'Swap node backward' })
+vim.keymap.set({ 'n', 'x' }, '<leader>l', swap.swap_next, { desc = 'Swap node forward' })
+vim.keymap.set({ 'n', 'x' }, '<leader>h', swap.swap_previous, { desc = 'Swap node backward' })
 ```
 
 ## Behavior and limits
 
-- Swaps only adjacent named siblings separated by one comma or semicolon and
-  optional whitespace. Arguments, array elements, and object entries work when
-  their grammar represents them this way.
-- Requires an exact named-node selection. Partial strings, surrounding
+- Uses named sibling relationships and field roles, not comma/semicolon
+  detection, language-specific node lists, or textobject queries. Siblings can
+  be separated by punctuation, whitespace, or newlines.
+- Visual mode requires an exact named-node selection. Partial strings, surrounding
   whitespace, and multi-item selections are not automatically rounded outward.
 - Same-range wrapper nodes are lifted to the outermost wrapper.
-- Never wraps at list boundaries or searches in another argument list.
+- Never wraps or searches beyond the chosen sibling group when a swap fails.
 - Rejects comments, syntax-error nodes, and gaps containing comments.
 - Supports nested/multiline nodes, UTF-8, and inclusive/exclusive selections.
 - Preserves the separator text; does not reindent or format the moved text.
-- Each successful swap is one undo step and keeps the moved node selected.
-- Characterwise Visual mode only. No count or dot-repeat support yet; repeat
-  the mapping to move the selected item again.
+- Each successful swap is one undo step and keeps the selection/cursor on the
+  moved text.
+- Normal mode and characterwise Visual mode only. No count or dot-repeat support
+  yet; repeat the mapping to move the item again.
 - This is structural reordering, not a semantic refactoring. Reordering
-  arguments or values can change program behavior.
+  arguments or values can change program behavior. Sibling/field relationships
+  do not guarantee that a swap will produce valid syntax in every grammar.
 
 ## Tests
 
@@ -110,6 +138,6 @@ From the repository root:
 nvim --headless -u NONE -l tests/swap.lua
 ```
 
-The tests require Lua, JSON, Python, and JavaScript parsers available on Neovim's
+The tests require Lua, JSON, Python, JavaScript, and Bash parsers available on Neovim's
 runtimepath. They exercise actual mappings and visual selections rather than
 mocking Tree-sitter.

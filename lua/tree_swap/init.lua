@@ -31,24 +31,71 @@ local function select_range(range)
   vim.api.nvim_win_set_cursor(0, { er + 1, ec })
 end
 
----Swap the selected syntax node with an adjacent list-like sibling.
----@param direction integer 1 for next, -1 for previous
-function M.swap(direction)
-  assert(direction == 1 or direction == -1, 'direction must be 1 or -1')
-  if vim.fn.mode() ~= 'v' then
-    notify('Use a characterwise syntax-node selection.')
-    return
+local function field(node)
+  local parent = node:parent()
+  if not parent then return nil end
+  for child, name in parent:iter_children() do
+    if child:equal(node) then return name end
   end
-  if not vim.bo.modifiable then return end
+end
 
-  local buf = vim.api.nvim_get_current_buf()
+local function unsafe(node)
+  return node:extra() or node:has_error() or node:missing() or node:type():find('comment')
+end
+
+local function visual_range()
   local anchor, cursor = vim.fn.getpos('v'), vim.fn.getpos('.')
   local segments = vim.fn.getregionpos(anchor, cursor, { type = 'v', eol = true })
   local selected = vim.fn.getregion(anchor, cursor, { type = 'v' })
   local start = segments[1][1]
   local finish = segments[#segments][1]
-  local range = { start[2] - 1, start[3] - 1, finish[2] - 1,
+  return { start[2] - 1, start[3] - 1, finish[2] - 1,
     finish[3] - 1 + #selected[#selected] }
+end
+
+local function cursor_node(node)
+  -- A container under the cursor means whitespace/punctuation rather than an item.
+  if node:named_child_count() > 0 or unsafe(node) then return nil end
+  while node:parent() do
+    local parent = node:parent()
+    if unsafe(parent) then return nil end
+    if parent:named_child_count() > 1 then
+      -- Some grammars represent wrapper markers as named nodes (e.g. literal
+      -- start/content/end). A fully named, unfielded, heterogeneous wrapper has
+      -- no repeated structural role, so keep climbing. No node names or token
+      -- text are used to recognize these wrappers.
+      local types, repeated, has_fields = {}, false, false
+      for child, name in parent:iter_children() do
+        if child:named() then
+          repeated = repeated or types[child:type()] == true
+          types[child:type()] = true
+          has_fields = has_fields or name ~= nil
+        end
+      end
+      if repeated or has_fields or parent:child_count() > parent:named_child_count() then
+        -- Stop regardless of direction: a failed swap must not climb outward.
+        return node
+      end
+    end
+    node = parent
+  end
+end
+
+---Swap an exact Visual selection or an inferred node at the Normal-mode cursor.
+---@param direction integer 1 for next, -1 for previous
+function M.swap(direction)
+  assert(direction == 1 or direction == -1, 'direction must be 1 or -1')
+  local mode = vim.fn.mode()
+  if mode ~= 'v' and mode ~= 'n' then
+    notify('Use Normal mode or a characterwise syntax-node selection.')
+    return
+  end
+  if not vim.bo.modifiable then return end
+
+  local buf = vim.api.nvim_get_current_buf()
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local range = mode == 'v' and visual_range()
+    or { cursor[1] - 1, cursor[2], cursor[1] - 1, cursor[2] + 1 }
 
   local parser = vim.treesitter.get_parser(buf, nil, { error = false })
   if not parser then
@@ -58,14 +105,19 @@ function M.swap(direction)
   parser:parse()
   local tree = parser:language_for_range(range)
   local node = tree:named_node_for_range(range)
-  if not node or not vim.deep_equal({ node:range() }, range) then
-    notify('Select a whole syntax node before swapping.')
-    return
-  end
-
-  -- Some grammars wrap expressions in nodes with identical ranges.
-  while node:parent() and vim.deep_equal({ node:parent():range() }, range) do
-    node = node:parent()
+  if mode == 'v' then
+    if not node or not vim.deep_equal({ node:range() }, range) then
+      notify('Select a whole syntax node before swapping.')
+      return
+    end
+    -- Some grammars wrap expressions in nodes with identical ranges.
+    while node:parent() and vim.deep_equal({ node:parent():range() }, range) do
+      node = node:parent()
+    end
+  else
+    node = node and cursor_node(node)
+    if not node then return end
+    range = { node:range() }
   end
   local sibling
   if direction > 0 then
@@ -74,19 +126,23 @@ function M.swap(direction)
     sibling = node:prev_named_sibling()
   end
   if not sibling then return end
-  if node:extra() or sibling:extra() or node:has_error() or sibling:has_error()
-      or node:type():find('comment') or sibling:type():find('comment') then
+  if unsafe(node) or unsafe(sibling) then
     notify('Cannot swap comments or nodes with syntax errors.')
     return
   end
+  -- Different fields usually represent different roles (e.g. function vs.
+  -- arguments). Unfielded children and repeated occurrences of one field are peers.
+  if field(node) ~= field(sibling) then return end
   local other = { sibling:range() }
   local left, right = range, other
   if direction < 0 then left, right = other, range end
   local gap = text(buf, { left[3], left[4], right[1], right[2] })
-  -- Don't swap arbitrary AST children or reassociate intervening comments.
-  if not gap:match('^%s*[,;]%s*$') then
-    notify('Selection is not beside a comma/semicolon-separated sibling.')
-    return
+  -- Reject extra/error nodes between the items, using the AST rather than text.
+  for child in node:parent():iter_children() do
+    local sr, sc, er, ec = child:range()
+    local after_left = sr > left[3] or (sr == left[3] and sc >= left[4])
+    local before_right = er < right[1] or (er == right[1] and ec <= right[2])
+    if after_left and before_right and unsafe(child) then return end
   end
 
   local left_text, right_text = text(buf, left), text(buf, right)
@@ -94,10 +150,19 @@ function M.swap(direction)
   local sr, sc = left[1], left[2]
   if direction > 0 then sr, sc = advance(sr, sc, right_text .. gap) end
   local er, ec = advance(sr, sc, text(buf, range))
+  local cursor_prefix
+  if mode == 'n' then
+    cursor_prefix = text(buf, { range[1], range[2], cursor[1] - 1, cursor[2] })
+  end
   -- One edit per swap preserves separators and makes undo atomic.
   vim.api.nvim_buf_set_text(buf, left[1], left[2], right[3], right[4],
     vim.split(replacement, '\n', { plain = true }))
-  select_range({ sr, sc, er, ec })
+  if mode == 'v' then
+    select_range({ sr, sc, er, ec })
+  else
+    local row, col = advance(sr, sc, cursor_prefix)
+    vim.api.nvim_win_set_cursor(0, { row + 1, col })
+  end
 end
 
 function M.swap_next()
