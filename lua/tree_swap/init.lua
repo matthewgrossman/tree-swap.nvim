@@ -108,12 +108,12 @@ function M.swap_previous()
   M.swap(-1)
 end
 
----Install visual-mode mappings. Callers can also bind the functions directly.
+---Optionally install explicitly requested visual-mode mappings. Setup is not required.
 ---@param opts? { keymaps?: false|{ next?: string|false, previous?: string|false } }
 function M.setup(opts)
   opts = opts or {}
-  if opts.keymaps == false then return end
-  local keys = vim.tbl_extend('force', { next = ']a', previous = '[a' }, opts.keymaps or {})
+  local keys = opts.keymaps
+  if not keys then return end
   if keys.next then
     vim.keymap.set('x', keys.next, M.swap_next, { desc = 'Swap selected syntax node forward' })
   end

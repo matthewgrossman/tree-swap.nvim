@@ -25,8 +25,10 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 ```lua
 {
   'matthewgrossman/tree-swap.nvim',
-  opts = {},
-  main = 'tree_swap',
+  keys = {
+    { ']a', function() require('tree_swap').swap_next() end, mode = 'x', desc = 'Swap node forward' },
+    { '[a', function() require('tree_swap').swap_previous() end, mode = 'x', desc = 'Swap node backward' },
+  },
 }
 ```
 
@@ -34,19 +36,24 @@ With Neovim's built-in `vim.pack`:
 
 ```lua
 vim.pack.add({ 'https://github.com/matthewgrossman/tree-swap.nvim' })
-require('tree_swap').setup()
+local swap = require('tree_swap')
+vim.keymap.set('x', ']a', swap.swap_next, { desc = 'Swap node forward' })
+vim.keymap.set('x', '[a', swap.swap_previous, { desc = 'Swap node backward' })
 ```
 
 For local development, add the checkout to your runtimepath instead:
 
 ```lua
 vim.opt.runtimepath:prepend(vim.fn.expand('~/dev/tree-swap.nvim'))
-require('tree_swap').setup()
+local swap = require('tree_swap')
+vim.keymap.set('x', ']a', swap.swap_next)
+vim.keymap.set('x', '[a', swap.swap_previous)
 ```
 
 ## Selecting and swapping
 
-`setup()` installs two **visual-mode** mappings:
+The plugin creates **no mappings by default**, and `setup()` is not required.
+The examples above explicitly bind two functions in **Visual mode**:
 
 | Key | Action |
 | --- | --- |
@@ -77,12 +84,11 @@ require('tree_swap').setup({
 })
 ```
 
-Set either mapping to `false` to omit it, or disable all default mappings and
-bind the functions yourself:
+Only keys you explicitly supply are mapped; omitted keys (or `false`) are left
+untouched. Alternatively, bind the functions directly without calling `setup()`:
 
 ```lua
 local swap = require('tree_swap')
-swap.setup({ keymaps = false })
 vim.keymap.set('x', ']a', swap.swap_next)
 vim.keymap.set('x', '[a', swap.swap_previous)
 ```
