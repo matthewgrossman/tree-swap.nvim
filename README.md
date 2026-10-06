@@ -62,7 +62,8 @@ The examples above explicitly bind two functions in **Normal and Visual modes**:
 ### Normal mode
 
 Place the cursor inside an item and use `]a` or `[a`. The plugin starts at the
-smallest token and climbs through wrappers. Anonymous delimiters in a wrapper
+smallest token (or an atomic named node with only anonymous children) and climbs
+through wrappers. Anonymous delimiters in a wrapper
 with at most one named child are lifted to the enclosing item, so a cursor on
 either quote of a string works just like a cursor on its content. It stops at a branching parent
 with repeated child types, named fields, or unnamed children, independently of
@@ -161,6 +162,6 @@ From the repository root:
 nvim --headless -u NONE -l tests/swap.lua
 ```
 
-The tests require Lua, JSON, Python, JavaScript, and Bash parsers available on Neovim's
+The tests require Lua, JSON, Python, JavaScript, Bash, and TOML parsers available on Neovim's
 runtimepath. They exercise actual mappings and visual selections rather than
 mocking Tree-sitter.

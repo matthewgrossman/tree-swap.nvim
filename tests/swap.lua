@@ -249,6 +249,25 @@ for _, case in ipairs({
   assert(content() == case[2])
 end
 
+-- TOML stores plain content directly in a string with only anonymous children.
+local toml_tabs = [=[previous_tab = ["ctrl-shift-tab", "cmd-shift-[", "cmd-{"]]=]
+local swapped_toml_tabs = [=[previous_tab = ["cmd-shift-[", "ctrl-shift-tab", "cmd-{"]]=]
+for _, offset in ipairs({ 0, 1, 14, 15 }) do
+  normal_setup('toml', toml_tabs, '"ctrl-shift-tab"', offset)
+  local original_cursor = vim.api.nvim_win_get_cursor(0)
+  press(']a')
+  assert(content() == swapped_toml_tabs, 'Failed to infer atomic TOML string at offset ' .. offset)
+  assert(vim.fn.mode() == 'n')
+  assert(vim.api.nvim_win_get_cursor(0)[2] == original_cursor[2] + 15)
+  press('[a')
+  assert(content() == toml_tabs)
+  assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), original_cursor))
+end
+normal_setup('toml', toml_tabs, '"ctrl-shift-tab"', 1)
+press(']a')
+press('.')
+assert(content() == [=[previous_tab = ["cmd-shift-[", "cmd-{", "ctrl-shift-tab"]]=])
+
 -- Opening/closing string delimiters must infer the same item as its content.
 local keymap_line = "  vim.keymap.set({ 'n', 'x' }, ']a', require('tree_swap').swap_next)"
 local swapped_keymap_line = "  vim.keymap.set({ 'x', 'n' }, ']a', require('tree_swap').swap_next)"

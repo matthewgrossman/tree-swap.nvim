@@ -78,8 +78,10 @@ local function has_peer(node)
 end
 
 local function cursor_node(node)
-  -- A non-leaf under the cursor means whitespace between tokens, not an item.
-  if node:child_count() > 0 or unsafe(node) then return nil end
+  -- A node with named children under the cursor is a gap between items. Nodes
+  -- with only anonymous children can still be atomic items: some grammars store
+  -- literal content directly in the node, with child tokens only for delimiters.
+  if node:named_child_count() > 0 or unsafe(node) then return nil end
   while node:parent() do
     local parent = node:parent()
     if unsafe(parent) then return nil end
