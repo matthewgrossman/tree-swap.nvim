@@ -191,6 +191,38 @@ assert(content() == 'printf second first', 'Climbed out at argument boundary')
 press('[a')
 assert(content() == 'printf first second')
 
+-- Opening/closing string delimiters must infer the same item as its content.
+local keymap_line = "  vim.keymap.set({ 'n', 'x' }, ']a', require('tree_swap').swap_next)"
+local swapped_keymap_line = "  vim.keymap.set({ 'x', 'n' }, ']a', require('tree_swap').swap_next)"
+for _, offset in ipairs({ 0, 1, 2 }) do
+  normal_setup('lua', keymap_line, "'n'", offset)
+  local original_cursor = vim.api.nvim_win_get_cursor(0)
+  press(']a')
+  assert(content() == swapped_keymap_line, 'Failed to swap Lua string at offset ' .. offset)
+  assert(vim.fn.mode() == 'n')
+  assert(vim.api.nvim_win_get_cursor(0)[2] == original_cursor[2] + 5)
+  press('[a')
+  assert(content() == keymap_line)
+  assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), original_cursor))
+end
+for _, case in ipairs({
+  { 'lua', "{ 'first', 'last' }", "'first'" },
+  { 'json', '["first", "last"]', '"first"' },
+  { 'javascript', '["first", "last"]', '"first"' },
+  { 'python', '["first", "last"]', '"first"' },
+  { 'lua', "{ '', 'last' }", "''" },
+}) do
+  for _, offset in ipairs({ 0, #case[3] - 1 }) do
+    normal_setup(case[1], case[2], case[3], offset)
+    local original_cursor = vim.api.nvim_win_get_cursor(0)
+    press(']a')
+    assert(content() ~= case[2], 'Delimiter swap failed for ' .. case[1])
+    press('[a')
+    assert(content() == case[2])
+    assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), original_cursor))
+  end
+end
+
 -- Missing parsers are a no-op, not an error.
 vim.cmd.enew({ bang = true })
 vim.bo.filetype = 'tree_swap_test_missing_parser'

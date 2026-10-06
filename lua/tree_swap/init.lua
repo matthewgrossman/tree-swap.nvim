@@ -54,8 +54,16 @@ local function visual_range()
 end
 
 local function cursor_node(node)
-  -- A container under the cursor means whitespace/punctuation rather than an item.
-  if node:named_child_count() > 0 or unsafe(node) then return nil end
+  -- A non-leaf under the cursor means whitespace between tokens, not an item.
+  if node:child_count() > 0 or unsafe(node) then return nil end
+  -- Anonymous delimiters can belong to a named item with content (e.g. a
+  -- string). Lift through that wrapper, but never infer an item from punctuation
+  -- between multiple named children. This uses only tree structure.
+  while not node:named() do
+    local parent = node:parent()
+    if not parent or parent:named_child_count() > 1 or unsafe(parent) then return nil end
+    node = parent
+  end
   while node:parent() do
     local parent = node:parent()
     if unsafe(parent) then return nil end
@@ -104,7 +112,12 @@ function M.swap(direction)
   end
   parser:parse()
   local tree = parser:language_for_range(range)
-  local node = tree:named_node_for_range(range)
+  local node
+  if mode == 'v' then
+    node = tree:named_node_for_range(range)
+  else
+    node = tree:node_for_range(range)
+  end
   if mode == 'v' then
     if not node or not vim.deep_equal({ node:range() }, range) then
       notify('Select a whole syntax node before swapping.')

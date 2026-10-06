@@ -62,7 +62,9 @@ The examples above explicitly bind two functions in **Normal and Visual modes**:
 ### Normal mode
 
 Place the cursor inside an item and use `]a` or `[a`. The plugin starts at the
-smallest named node and climbs through wrappers. It stops at a branching parent
+smallest token and climbs through wrappers. Anonymous delimiters in a wrapper
+with at most one named child are lifted to the enclosing item, so a cursor on
+either quote of a string works just like a cursor on its content. It stops at a branching parent
 with repeated child types, named fields, or unnamed children, independently of
 swap direction. Fully named, unfielded wrappers with distinct child types are
 skipped (some grammars model literal start/content/end this way). It swaps only
