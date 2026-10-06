@@ -226,6 +226,29 @@ normal_setup('lua', 'call({ expr = true }, other)', 'expr')
 press(']a')
 assert(content() == 'call({ expr = true }, other)', 'Climbed out of a singleton keyed entry')
 
+-- Mixed node types with the same field role are peers in both modes.
+for _, case in ipairs({
+  { 'javascript', 'const entries = { first: 1, second };', 'first: 1', 'first',
+    'const entries = { second, first: 1 };' },
+  { 'javascript', 'const entries = { first: 1, second };', 'first: 1', '1',
+    'const entries = { second, first: 1 };' },
+  { 'javascript', '[a + b, c + d]', 'a + b', 'a', '[c + d, a + b]' },
+  { 'javascript', '[a + b, c]', 'a + b', 'a', '[c, a + b]' },
+  { 'python', '{"first": 1, **second}', '"first": 1', 'first', '{**second, "first": 1}' },
+  { 'python', '{"first": 1, **second}', '"first": 1', '1', '{**second, "first": 1}' },
+}) do
+  setup(case[1], case[2], case[3])
+  press(']a')
+  assert(content() == case[5], 'Mixed Visual peers failed: ' .. content())
+  press('[a')
+  assert(content() == case[2])
+  normal_setup(case[1], case[2], case[4])
+  press(']a')
+  assert(content() == case[5], 'Mixed Normal peers failed: ' .. content())
+  press('[a')
+  assert(content() == case[2])
+end
+
 -- Opening/closing string delimiters must infer the same item as its content.
 local keymap_line = "  vim.keymap.set({ 'n', 'x' }, ']a', require('tree_swap').swap_next)"
 local swapped_keymap_line = "  vim.keymap.set({ 'x', 'n' }, ']a', require('tree_swap').swap_next)"
@@ -257,6 +280,73 @@ for _, case in ipairs({
     assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), original_cursor))
   end
 end
+
+-- Protect comment descendants structurally, including across injection roots.
+local comment_line = '-- [first, second]\nlocal other = 1'
+normal_setup('lua', comment_line, 'first')
+press(']a')
+assert(content() == comment_line, 'Normal swap entered a comment descendant')
+setup('lua', comment_line, ' [first, second]')
+local comment_node = vim.treesitter.get_parser(0, 'lua'):named_node_for_range({ 0, 2, 0, 18 })
+assert(not comment_node:extra() and comment_node:parent():extra(), 'Expected nested non-extra comment content')
+press(']a')
+assert(content() == comment_line, 'Visual swap entered non-extra comment content')
+
+vim.treesitter.query.set('lua', 'injections', [[
+  (comment (comment_content) @injection.content
+    (#set! injection.language "javascript"))
+]])
+for _, mode in ipairs({ 'n', 'v' }) do
+  if mode == 'n' then normal_setup('lua', comment_line, 'first')
+  else setup('lua', comment_line, 'first') end
+  local parser = vim.treesitter.get_parser(0, 'lua')
+  parser:parse(true)
+  assert(parser:language_for_range({ 0, 4, 0, 9 }):lang() == 'javascript', 'Comment injection not active')
+  press(']a')
+  assert(content() == comment_line, 'Swap escaped a comment through an injection root')
+end
+
+-- Injections outside extra nodes must still be swappable.
+vim.treesitter.query.set('lua', 'injections', [[
+  (string (string_content) @injection.content
+    (#set! injection.language "javascript"))
+]])
+normal_setup('lua', "local items = '[first, second]'", 'first')
+press(']a')
+assert(content() == "local items = '[second, first]'", 'Safe injection swap was blocked')
+
+-- A nested injection must not hide an extra node in an intermediate host.
+vim.treesitter.query.set('javascript', 'injections', [[
+  ((comment) @injection.content
+    (#set! injection.language "python")
+    (#offset! @injection.content 0 3 0 -3))
+]])
+local nested_comment = "local items = '/* [first, second] */'"
+for _, mode in ipairs({ 'n', 'v' }) do
+  for _, direction in ipairs({ { 'first', ']a' }, { 'second', '[a' } }) do
+    if mode == 'n' then normal_setup('lua', nested_comment, direction[1])
+    else setup('lua', nested_comment, direction[1]) end
+    local parser = vim.treesitter.get_parser(0, 'lua')
+    parser:parse(true)
+    local col = assert(nested_comment:find(direction[1], 1, true)) - 1
+    local range = { 0, col, 0, col + #direction[1] }
+    local tree = parser:language_for_range(range)
+    assert(tree:lang() == 'python', 'Innermost Python injection not active')
+    assert(tree:parent():lang() == 'javascript', 'Intermediate JavaScript injection not active')
+    assert(tree:parent():node_for_range(range):extra(), 'Intermediate host must be an extra node')
+    assert(not tree:node_for_range(range):extra(), 'Selected Python node must not itself be extra')
+    assert(not parser:node_for_range(range):extra(), 'Outer Lua host must not itself be extra')
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    local tick = vim.api.nvim_buf_get_changedtick(0)
+    press(direction[2])
+    assert(content() == nested_comment, 'Nested injection escaped intermediate extra protection')
+    assert(vim.api.nvim_buf_get_changedtick(0) == tick, 'Blocked nested swap made an edit')
+    assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), cursor), 'Blocked nested swap moved cursor')
+    assert(vim.fn.mode() == mode, 'Blocked nested swap changed mode')
+  end
+end
+vim.treesitter.query.set('javascript', 'injections', nil)
+vim.treesitter.query.set('lua', 'injections', nil)
 
 -- Native dot-repeat resolves fresh nodes, follows direction, and respects boundaries.
 normal_setup('json', '["a", "b", "c", "d"]', '"a"')

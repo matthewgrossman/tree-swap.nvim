@@ -40,7 +40,21 @@ local function field(node)
 end
 
 local function unsafe(node)
-  return node:extra() or node:has_error() or node:missing() or node:type():find('comment')
+  return node:extra() or node:has_error() or node:missing()
+end
+
+local function inside_extra(tree, range)
+  -- Node ancestry ends at an injection root. Inspect every LanguageTree so
+  -- extra nodes in intermediate hosts cannot be bypassed by nested injections.
+  while tree do
+    local node = tree:node_for_range(range)
+    while node do
+      if node:extra() then return true end
+      node = node:parent()
+    end
+    tree = tree:parent()
+  end
+  return false
 end
 
 local function visual_range()
@@ -56,7 +70,7 @@ end
 local function has_peer(node)
   local role = field(node)
   for _, sibling in pairs({ node:prev_named_sibling(), node:next_named_sibling() }) do
-    if not unsafe(sibling) and sibling:type() == node:type() and field(sibling) == role then
+    if not unsafe(sibling) and field(sibling) == role then
       return true
     end
   end
@@ -66,18 +80,13 @@ end
 local function cursor_node(node)
   -- A non-leaf under the cursor means whitespace between tokens, not an item.
   if node:child_count() > 0 or unsafe(node) then return nil end
-  -- Anonymous delimiters can belong to a named item with content (e.g. a
-  -- string). Lift through that wrapper, but never infer an item from punctuation
-  -- between multiple named children. This uses only tree structure.
-  while not node:named() do
-    local parent = node:parent()
-    if not parent or parent:named_child_count() > 1 or unsafe(parent) then return nil end
-    node = parent
-  end
   while node:parent() do
     local parent = node:parent()
     if unsafe(parent) then return nil end
     if parent:named_child_count() > 1 then
+      -- Delimiters in wrappers can identify an item, but punctuation between
+      -- multiple named children must never choose an enclosing group.
+      if not node:named() then return nil end
       -- Some grammars represent wrapper markers as named nodes (e.g. literal
       -- start/content/end). A fully named, unfielded, heterogeneous wrapper has
       -- no repeated structural role, so keep climbing. No node names or token
@@ -96,17 +105,13 @@ local function cursor_node(node)
       -- Require syntax tokens and matching peer entries to avoid treating a
       -- call's function/arguments as interchangeable children or climbing out
       -- of a singleton argument list.
-      if has_fields and has_tokens and not has_peer(node) and has_peer(parent) then
-        node = parent
-      elseif repeated or has_fields or has_tokens then
+      local lift_entry = has_fields and has_tokens and not has_peer(node) and has_peer(parent)
+      if not lift_entry and (repeated or has_fields or has_tokens) then
         -- Stop regardless of direction: a failed swap must not climb outward.
         return node
-      else
-        node = parent
       end
-    else
-      node = parent
     end
+    node = parent
   end
 end
 
@@ -128,8 +133,9 @@ local function prepare_swap(direction)
     notify('No Tree-sitter parser for this buffer.')
     return
   end
-  parser:parse()
+  parser:parse(range)
   local tree = parser:language_for_range(range)
+  if inside_extra(tree, range) then return end
   local node
   if mode == 'v' then
     node = tree:named_node_for_range(range)
@@ -164,35 +170,33 @@ local function prepare_swap(direction)
   -- Different fields usually represent different roles (e.g. function vs.
   -- arguments). Unfielded children and repeated occurrences of one field are peers.
   if field(node) ~= field(sibling) then return end
-  local other = { sibling:range() }
-  local left, right = range, other
-  if direction < 0 then left, right = other, range end
+  local left_node, right_node = node, sibling
+  if direction < 0 then left_node, right_node = sibling, node end
+  local left, right = { left_node:range() }, { right_node:range() }
   local gap = text(buf, { left[3], left[4], right[1], right[2] })
   -- Reject extra/error nodes between the items, using the AST rather than text.
-  for child in node:parent():iter_children() do
-    local sr, sc, er, ec = child:range()
-    local after_left = sr > left[3] or (sr == left[3] and sc >= left[4])
-    local before_right = er < right[1] or (er == right[1] and ec <= right[2])
-    if after_left and before_right and unsafe(child) then return end
+  local child = left_node:next_sibling()
+  while child and not child:equal(right_node) do
+    if unsafe(child) then return end
+    child = child:next_sibling()
   end
 
   local left_text, right_text = text(buf, left), text(buf, right)
   local replacement = right_text .. gap .. left_text
   local sr, sc = left[1], left[2]
   if direction > 0 then sr, sc = advance(sr, sc, right_text .. gap) end
-  local er, ec = advance(sr, sc, text(buf, range))
-  local cursor_prefix
+  local tracked_text = direction > 0 and left_text or right_text
   if mode == 'n' then
-    cursor_prefix = text(buf, { range[1], range[2], cursor[1] - 1, cursor[2] })
+    tracked_text = text(buf, { range[1], range[2], cursor[1] - 1, cursor[2] })
   end
+  local row, col = advance(sr, sc, tracked_text)
   return function()
     -- One edit per swap preserves separators and makes undo atomic.
     vim.api.nvim_buf_set_text(buf, left[1], left[2], right[3], right[4],
       vim.split(replacement, '\n', { plain = true }))
     if mode == 'v' then
-      select_range({ sr, sc, er, ec })
+      select_range({ sr, sc, row, col })
     else
-      local row, col = advance(sr, sc, cursor_prefix)
       vim.api.nvim_win_set_cursor(0, { row + 1, col })
     end
   end

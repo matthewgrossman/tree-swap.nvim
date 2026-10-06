@@ -90,7 +90,8 @@ when its tree includes unnamed syntax tokens, without checking their text:
 -- Cursor on expr (or its value), ]a → { silent = true, expr = true }
 ```
 
-The lift requires an adjacent entry with the same node type and field role.
+The lift requires a safe adjacent entry with the same field role; its node type
+can differ (for example, a keyed property beside a shorthand property).
 Singleton entries and boundaries do not fall back to moving an enclosing list.
 Visual mode never performs this lift; its selection must match the whole entry.
 
@@ -134,7 +135,10 @@ vim.keymap.set({ 'n', 'x' }, '<leader>h', swap.swap_previous, { desc = 'Swap nod
   whitespace, and multi-item selections are not automatically rounded outward.
 - Same-range wrapper nodes are lifted to the outermost wrapper.
 - Never wraps or searches beyond the chosen sibling group when a swap fails.
-- Rejects comments, syntax-error nodes, and gaps containing comments.
+- Rejects extra/error nodes and unsafe intervening siblings. Nodes inside extra
+  ancestors (comments in the tested grammars) are also protected, including when
+  an injected tree hides those ancestors. No comment-type-name heuristic is used;
+  grammars must mark comments as extra nodes for this protection.
 - Supports nested/multiline nodes, UTF-8, and inclusive/exclusive selections.
 - Preserves the separator text; does not reindent or format the moved text.
 - Each successful swap is one undo step and keeps the selection/cursor on the
