@@ -139,8 +139,12 @@ vim.keymap.set({ 'n', 'x' }, '<leader>h', swap.swap_previous, { desc = 'Swap nod
 - Preserves the separator text; does not reindent or format the moved text.
 - Each successful swap is one undo step and keeps the selection/cursor on the
   moved text.
-- Normal mode and characterwise Visual mode only. No count or dot-repeat support
-  yet; repeat the mapping to move the item again.
+- Normal mode and characterwise Visual mode only. Normal-mode swaps support native
+  `.` repeat: the last successful direction is applied to a freshly inferred node
+  at the current cursor, even in another buffer. Failed mappings leave the previous
+  repeatable change intact; ordinary edits replace the swap in dot history.
+- Visual swaps retain the selection but do not register dot-repeat. Repeat the
+  mapping to keep moving the selected node. Counts are not supported yet.
 - This is structural reordering, not a semantic refactoring. Reordering
   arguments or values can change program behavior. Sibling/field relationships
   do not guarantee that a swap will produce valid syntax in every grammar.

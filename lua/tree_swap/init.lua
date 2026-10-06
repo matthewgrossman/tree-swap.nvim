@@ -110,10 +110,7 @@ local function cursor_node(node)
   end
 end
 
----Swap an exact Visual selection or an inferred node at the Normal-mode cursor.
----@param direction integer 1 for next, -1 for previous
-function M.swap(direction)
-  assert(direction == 1 or direction == -1, 'direction must be 1 or -1')
+local function prepare_swap(direction)
   local mode = vim.fn.mode()
   if mode ~= 'v' and mode ~= 'n' then
     notify('Use Normal mode or a characterwise syntax-node selection.')
@@ -188,15 +185,46 @@ function M.swap(direction)
   if mode == 'n' then
     cursor_prefix = text(buf, { range[1], range[2], cursor[1] - 1, cursor[2] })
   end
-  -- One edit per swap preserves separators and makes undo atomic.
-  vim.api.nvim_buf_set_text(buf, left[1], left[2], right[3], right[4],
-    vim.split(replacement, '\n', { plain = true }))
-  if mode == 'v' then
-    select_range({ sr, sc, er, ec })
-  else
-    local row, col = advance(sr, sc, cursor_prefix)
-    vim.api.nvim_win_set_cursor(0, { row + 1, col })
+  return function()
+    -- One edit per swap preserves separators and makes undo atomic.
+    vim.api.nvim_buf_set_text(buf, left[1], left[2], right[3], right[4],
+      vim.split(replacement, '\n', { plain = true }))
+    if mode == 'v' then
+      select_range({ sr, sc, er, ec })
+    else
+      local row, col = advance(sr, sc, cursor_prefix)
+      vim.api.nvim_win_set_cursor(0, { row + 1, col })
+    end
   end
+end
+
+local repeat_direction, pending_swap
+
+-- Called by g@l on the initial mapping and by . on subsequent repeats.
+-- Only the initial invocation uses a prepared edit; repeats resolve fresh AST
+-- nodes at the current cursor, including in a different buffer.
+function M._operator()
+  local apply = pending_swap
+  pending_swap = nil
+  if not apply and repeat_direction then apply = prepare_swap(repeat_direction) end
+  if apply then apply() end
+end
+
+---Swap an exact Visual selection or an inferred node at the Normal-mode cursor.
+---Normal-mode swaps register the direction for native dot-repeat.
+---@param direction integer 1 for next, -1 for previous
+function M.swap(direction)
+  assert(direction == 1 or direction == -1, 'direction must be 1 or -1')
+  local apply = prepare_swap(direction)
+  if not apply then return end
+  if vim.fn.mode() == 'v' then
+    apply()
+    return
+  end
+  -- Don't replace the last repeatable change unless there is a valid swap.
+  repeat_direction, pending_swap = direction, apply
+  vim.go.operatorfunc = "v:lua.require'tree_swap'._operator"
+  vim.api.nvim_feedkeys('g@l', 'ni', false)
 end
 
 function M.swap_next()

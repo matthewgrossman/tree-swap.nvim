@@ -258,6 +258,72 @@ for _, case in ipairs({
   end
 end
 
+-- Native dot-repeat resolves fresh nodes, follows direction, and respects boundaries.
+normal_setup('json', '["a", "b", "c", "d"]', '"a"')
+press(']a')
+assert(content() == '["b", "a", "c", "d"]')
+press('.')
+assert(content() == '["b", "c", "a", "d"]')
+press('.')
+assert(content() == '["b", "c", "d", "a"]')
+press('.')
+assert(content() == '["b", "c", "d", "a"]', 'Dot-repeat escaped a sibling boundary')
+assert(vim.fn.mode() == 'n')
+press('u')
+assert(content() == '["b", "c", "a", "d"]', 'Repeated swap was not a separate undo step')
+press('u')
+assert(content() == '["b", "a", "c", "d"]')
+
+-- Moving to another item/buffer repeats the operation, not the original coordinates.
+normal_setup('lua', 'call(first, second, third)', 'first')
+press('.')
+assert(content() == 'call(second, first, third)')
+normal_setup('json', '["a", "b", "c"]', '"c"')
+press('[a')
+assert(content() == '["a", "c", "b"]')
+press('.')
+assert(content() == '["c", "a", "b"]')
+normal_setup('lua', 'call(first, second, third)', 'second')
+press('.')
+assert(content() == 'call(second, first, third)', 'Repeat lost the backward direction')
+
+-- Repeat retains keyed-entry inference and UTF-8 cursor positioning.
+normal_setup('lua', '{ expr = true, silent = true, nowait = true }', 'expr')
+press(']a')
+press('.')
+assert(content() == '{ silent = true, nowait = true, expr = true }', 'Dot lost keyed-entry inference')
+normal_setup('python', '["世界", "second", "third"]', '"世界"', 1)
+press(']a')
+press('.')
+assert(content() == '["second", "third", "世界"]', 'Dot failed on a UTF-8 string')
+assert(vim.api.nvim_win_get_cursor(0)[2] == assert(content():find('世界', 1, true)) - 1)
+
+-- A failed mapping in the opposite direction must not change the saved direction.
+normal_setup('json', '["a", "b", "c"]', '"a"')
+press(']a')
+vim.api.nvim_win_set_cursor(0, { 1, 1 })
+press('[a')
+assert(content() == '["b", "a", "c"]')
+press('.')
+assert(content() == '["a", "b", "c"]', 'Failed swap overwrote repeat direction')
+
+-- A regular edit replaces the swap in dot history; failed swaps preserve it.
+normal_setup('json', '["one", "two", "three"]', '"one"', 1)
+press(']a')
+press('rZ')
+assert(content() == '["two", "Zne", "three"]')
+vim.api.nvim_win_set_cursor(0, { 1, assert(content():find('three', 1, true)) - 1 })
+press('.')
+assert(content() == '["two", "Zne", "Zhree"]', 'Swap stole dot-repeat from a regular edit')
+normal_setup('lua', 'call(a, b)', 'b')
+press('rB')
+local previous_operator = vim.go.operatorfunc
+press(']a')
+assert(vim.go.operatorfunc == previous_operator, 'Failed swap replaced operatorfunc')
+vim.api.nvim_win_set_cursor(0, { 1, 5 })
+press('.')
+assert(content() == 'call(B, B)', 'Failed swap replaced a repeatable regular edit')
+
 -- Missing parsers are a no-op, not an error.
 vim.cmd.enew({ bang = true })
 vim.bo.filetype = 'tree_swap_test_missing_parser'
@@ -281,4 +347,4 @@ press('<leader>l')
 assert(content() == '["last", "first"]', 'Custom direct binding failed')
 assert(selection() == '"first"')
 
-print('PASS: Visual/Normal swaps, punctuation-independent siblings, cursor/selection tracking, safety checks, undo, incremental selection, custom mappings')
+print('PASS: Visual/Normal swaps, dot-repeat, punctuation-independent siblings, cursor/selection tracking, safety checks, undo, incremental selection, custom mappings')
